@@ -1,0 +1,10 @@
+# Response headers for Cloudflare Pages-style static hosts.
+# SharedArrayBuffer (wasm threads) needs a cross-origin isolated page: COOP and COEP on the page, CORP on every file.
+# Versioning is sw.js's job (Cache Storage keyed by each file's sha1 in wasm-cache.json), so every URL revalidates
+# and nothing is marked immutable: a new deploy is picked up by the next page load.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin
+  Cache-Control: no-cache
+  X-Content-Type-Options: nosniff

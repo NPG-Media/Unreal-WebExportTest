@@ -1,0 +1,383 @@
+<!doctype html>
+<!-- The page of a staged Wasm game (one generic page). UAT stages it at the folder's root next to
+     wasm-manifest.json and replaces WebExportTest with the project's name (the folder of its .js and .wasm, in
+     <Project>/Binaries/Wasm/) and WebExportTest with its title (WasmPlatform.Automation.cs).
+     The cover: the game starts at once behind it; the cover lists the start-up steps with a loading bar and lifts when the engine
+     says the game is ready ('ue-ready', wasm-play.js). Sound starts on the first click or key (browsers allow audio only after
+     a gesture). The ue-start meta set to "click" keeps the cover up after ready until the player clicks (that click is the
+     gesture for sound and pointer lock).
+     Query: ?args=<UE command line> (before the defaults: UE reads a map from the first token and a flag's first occurrence),
+     ?harness=1 (no cover, no hint: Build/Tools/web), ?sw=0 (no data cache), ?swranges=wait|net, ?blob=0, ?gpucheck=1, ?compat=1, ?debug=1 (the debug overlay, wasm-debug.js),
+     ?threads=1|0 and ?sound=1|0 (threading and sound, over the ue-threads-* and ue-sound-* settings),
+     ?memory=1 (the memory recorder, wasm-memory.js; Development stages only).
+     Page settings (meta, filled by the template or a project's copy of it): ue-args (UE switches every load gets), ue-max-dpr
+     (device pixels per CSS pixel, default 1), ue-start (auto|click), ue-hint ("Esc=Menu;Tab=Controls": the key hint shown while
+     playing, none by default), ue-gpucheck (1: the first-visit GPU check picks a starting resolution), ue-native-build (a link
+     for players whose browser cannot run the game). -->
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><title>WebExportTest</title><meta name="ue-project" content="WebExportTest"><meta name="ue-game" content="WebExportTest"><link rel="icon" href="data:,">
+<!-- The name under a home-screen icon on iOS. Installing the game (a progressive web app: Add to Home Screen, Install in
+     Chrome and Edge, then it opens without the browser's bars) is opt-in: with bInstallable UAT stages manifest.webmanifest
+     (name, display mode, orientation, colours, icons, filled from the Install settings) and the icons, and adds the manifest
+     link (rel manifest) and the home-screen icon iOS takes from the page (rel apple-touch-icon) after this tag -->
+<meta name="apple-mobile-web-app-title" content="WebExportTest">
+<!-- UE switches every load gets (wasm-loader.js puts them after ?args=). Threads: Chrome stops at about 76 Workers, so the
+     task graph creates its workers on demand and oversubscribes by a quarter (at least one standby worker per queue, so a
+     worker task that waits on another task cannot deadlock its queue; at most 4 more threads, inside the pthread pool);
+     -NoLogThread: the log has no thread of its own (each thread is a Worker with its own memory, about 28 MB in Chrome),
+     its buffered devices are flushed by the game thread -->
+<meta name="ue-args" content="-TaskGraphUseDynamicThreadCreation=1 -oversubscriptionratio=1.25 -NoLogThread">
+<!-- what a link's ?args= may pass: all, safe (a /Game/ map and the page's switches) or off; UAT writes all in Development,
+     safe in Test and Shipping (setting QueryArgs) -->
+<meta name="ue-query-args" content="safe">
+<meta name="ue-max-dpr" content="1">
+<meta name="ue-start" content="auto">
+<!-- The pipeline hold (wasm-play.js): engine (the default: after ready, the cover stays up while the engine holds for pipelines
+     still compiling, when it announces a hold) or off (lift at ready); ?hold= overrides it -->
+<meta name="ue-pipeline-hold" content="engine">
+<!-- What lifts the cover (wasm-play.js readySignal): engine (the default: the engine's ready marker) or game (the game's own
+     signal, window.ue.gameReady() or the log line UE_RUN GAME_READY, waited for at most ue-ready-wait seconds after the
+     engine's marker); ?ready= overrides it -->
+<meta name="ue-ready" content="engine">
+<meta name="ue-ready-wait" content="60">
+<!-- GPU failures (wasm-play.js): a pipeline the GPU cannot build, mobile (the default: a deferred or desktop start reloads once on
+     the forward renderer, a frame-critical failure on the forward renderer stops with a message) or off (logged only); a lost
+     device, stop (the default: the error card; after a deferred or desktop start the tab's next start, the player's reload,
+     runs the forward renderer) or reload (the page reloads, on the forward renderer after a deferred or desktop start) -->
+<meta name="ue-pipeline-fallback" content="mobile">
+<meta name="ue-device-lost" content="stop">
+
+<!-- Threading and sound by device class (wasm-compat.js threading(), settings IOSThreadingMode, bIOSEnableSound,
+     IOSPthreadPoolSize and the Android and Desktop ones): single or threaded; sound 1 or 0 (single-threaded, the mixer runs on
+     the game thread and can stutter on shader compiles and long frames); the pthread pool size, 0 automatic. ?threads=1|0
+     and ?sound=1|0 override them -->
+<meta name="ue-threads-ios" content="single">
+<meta name="ue-threads-android" content="threaded">
+<meta name="ue-threads-desktop" content="threaded">
+<meta name="ue-sound-ios" content="1">
+<meta name="ue-sound-android" content="1">
+<meta name="ue-sound-desktop" content="1">
+<meta name="ue-pool-ios" content="0">
+<meta name="ue-pool-android" content="0">
+<meta name="ue-pool-desktop" content="0">
+<meta name="ue-hint" content="">
+<meta name="ue-gpucheck" content="0">
+<!-- The renderer and preset pick (wasm-compat.js; tiers forward, deferred and desktop, of those wasm-tiers.json lists): the default
+     tier, auto (phones and Firefox forward, the GPU check's class picks deferred or desktop), deferred (the desktop tier only on ?tier=desktop or
+     a game menu's choice) or forward (also mobile: the other tiers only on ?tier= or the menu); the GPU check's steps per tier ("<ms per draw>=<preset>", strictest first; empty:
+     the built-in ones); with GPU timing (timestamp-query) the lowest starting resolution step, as dynamic resolution lowers it
+     under load (empty: no floor) -->
+<meta name="ue-default-tier" content="auto">
+<meta name="ue-desktop-tiers" content="">
+<meta name="ue-mobile-tiers" content="">
+<meta name="ue-resolution-floor" content="">
+<!-- Compatibility policy (wasm-compat.js): warnings below these, required texture features, phones and tablets (warn|block|
+     allow), the line non-Chrome browsers read (empty: the built-in one; "none": no line); arguments for one browser only -->
+<meta name="ue-min-cpus" content="4">
+<meta name="ue-min-memory-gb" content="8">
+<meta name="ue-texture-formats" content="texture-compression-bc">
+<meta name="ue-mobile" content="warn">
+<!-- The lowest GPU limits the game's shaders need, below which the check stops with a message ("maxStorageBuffersPerShaderStage=12,
+     maxSampledTexturesPerShaderStage=20"; empty: none). The engine's own (maxStorageBuffersPerShaderStage=10) apply whatever this says -->
+<meta name="ue-min-gpu-limits" content="">
+<meta name="ue-browser-advice" content="">
+<meta name="ue-args-firefox" content="">
+<!-- The lowest Safari and iOS version let in, for a build that runs there (Memory64 lowered at link); 0: no version test -->
+<meta name="ue-min-apple-version" content="26">
+<!-- Device profiles (wasm-profile.js: ios on iPhone and iPad, android, desktop): a fixed wasm memory in MB ("memory=1536/1024": each
+     size in turn until the browser reserves one), the pthread pool ("pool=32") and a frame cap ("fps=30", a ceiling on the
+     frame rate), space-separated, and the profile's engine arguments (ue-args-<profile>). Empty: the link's memory and pool, frames at
+     the display's rate -->
+<meta name="ue-profile-ios" content="">
+<meta name="ue-profile-android" content="">
+<meta name="ue-args-ios" content="">
+<meta name="ue-args-android" content="">
+<!-- Data cache (sw.js): when to ask for persistent storage (load|ready|never). The host turns the cache off for everyone by
+     serving wasm-cache.json as {"sw": "off"} -->
+<meta name="ue-persist" content="load">
+<!-- A late container's reads before the game is ready (sw.js): release (the default: network ranges, the whole file once the game
+     is ready) or early (the first read starts the whole file's load at low priority; later reads take what has arrived) -->
+<meta name="ue-sw-late-fill" content="release">
+<!-- The start-up containers' loads (sw.js): 0 (the default: all at once) or 1 (in waves: the small files the engine reads first
+     with the containers' tails, then the large containers) -->
+<meta name="ue-sw-waves" content="0">
+<!-- Cache priming (wasm-loader.js): a pre-baked file the game can start from (its URL as wasm-cache.json lists it) and the engine
+     arguments that make it read the file, on a first visit (the default), in a browser that builds pipelines one at a time
+     (serial), or always; empty: none -->
+<meta name="ue-prime-file" content="">
+<meta name="ue-prime-args" content="">
+<meta name="ue-prime-when" content="first">
+<!-- A host that cannot send the isolation headers (COOP/COEP): 1 lets the service worker add them (one reload); 0: off -->
+<meta name="ue-sw-isolation" content="0">
+<!-- The end card: an optional https link offered when the game ends, and its text -->
+<meta name="ue-end-link" content="">
+<meta name="ue-end-link-text" content="">
+<!-- An intro shell: a script the project stages (Build/Wasm/Template) that registers with ue.shell; empty: none -->
+<meta name="ue-shell" content="">
+<!-- Error reports: an https endpoint that takes a JSON POST (empty: none) and when to send (ask|always) -->
+<meta name="ue-crash-url" content="">
+<meta name="ue-crash-consent" content="ask">
+<!-- The memory recorder (?memory=1, wasm-memory.js): an https or same-origin endpoint that takes its JSON reports (empty: none) -->
+<meta name="ue-memory-report-url" content="">
+<script>
+// The display's refresh rate from 30 requestAnimationFrame intervals (median), read by wasm-loader.js as the frame cap; a
+// rate that is not measured in time leaves the game uncapped
+(() => {
+  let ready;
+  window.ueDisplayHzReady = new Promise((resolve) => { ready = resolve; });
+  const times = [];
+  const step = (t) => {
+    times.push(t);
+    if (times.length < 31) { requestAnimationFrame(step); return; }
+    const gaps = times.slice(1).map((v, i) => v - times[i]).sort((x, y) => x - y);
+    const hz = 1000 / gaps[gaps.length >> 1];
+    window.ueDisplayHz = [30, 48, 50, 60, 72, 75, 90, 100, 120, 144, 165, 240].reduce((a, c) => Math.abs(c - hz) < Math.abs(a - hz) ? c : a);
+    console.log('PAGE DISPLAY_HZ ' + window.ueDisplayHz + ' (measured ' + hz.toFixed(1) + ')');
+    ready(window.ueDisplayHz);
+  };
+  requestAnimationFrame(step);
+})();
+</script>
+<style>
+/* Colours and the cover's look are custom properties, so a project restyles the page here (the project settings fill them) */
+:root{--bg:#101010;--panel:#1c1c1c;--text:#ddd;--muted:#999;--accent:#f0b429;--bad:#e5534b;--line:#333;
+  --pill:#1b2130cc;--paint:#f0b429;--done:#8cc152;--cover-top:#26292d;--cover-bottom:#17191b;--title:#e9e6df}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px system-ui,sans-serif;overflow:hidden}
+/* touch-action: the game gets every touch; without it Safari scrolls, and zooms on a two-finger press (both virtual joysticks) */
+canvas{width:100%;height:100%;display:block;outline:none;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+#status{display:none}
+/* The cover: a size container, so the art and the loader scale with the window (cqw/cqh) */
+#cover{position:fixed;inset:0;z-index:5;overflow:hidden;container-type:size;background:var(--cover-bottom);transition:opacity .5s}
+#cover.lifting{opacity:0;pointer-events:none}
+#cover[hidden]{display:none}
+/* While the opaque cover is up the canvas under it is not drawn: a game canvas the browser composites under an opaque layer
+   ran the game at about half its frame rate after ready, so the engine's pipeline hold reached its cap. It shows again as
+   the cover starts to fade (lifting) and while ue-start=click waits (pointer lock wants a visible canvas) */
+body:has(#cover:not([hidden]):not(.lifting):not(.click)) canvas{visibility:hidden}
+#cover.click{cursor:pointer}
+#shell{position:absolute;inset:0}
+#shell:empty{display:none}
+#steps[hidden],#loader[hidden],#art[hidden]{display:none}
+#art{position:absolute;inset:0;background:linear-gradient(180deg,var(--cover-top),var(--cover-bottom))}
+#art .title{position:absolute;left:0;right:0;top:30cqh;text-align:center}
+#art h1{margin:0 16px;font:800 min(11cqh,9cqw)/1 system-ui,sans-serif;letter-spacing:.02em;color:var(--title);text-shadow:0 .03em .08em #0008;
+  overflow-wrap:anywhere}
+/* The steps (top left) and the bar (under the title) */
+#steps{position:absolute;left:16px;top:16px;margin:0;padding:10px 14px;list-style:none;background:var(--pill);color:#eef1f6;border-radius:10px;
+  font:13px/1.5 system-ui,sans-serif;max-width:min(460px,calc(100cqw - 32px));box-sizing:border-box}
+#steps li{display:flex;gap:8px;align-items:baseline}
+#steps li::before{content:'';flex:none;width:9px;height:9px;border-radius:50%;border:2px solid #8a93a6;box-sizing:border-box;transform:translateY(1px)}
+#steps li.active::before{border-color:var(--paint);border-top-color:transparent;animation:spin .8s linear infinite}
+#steps li.done::before{background:var(--done);border-color:var(--done)}
+#steps li.warn::before{background:var(--paint);border-color:var(--paint)}
+#steps li.pending{color:#9aa3b5}
+#steps .detail{color:#b9c2d3;font-variant-numeric:tabular-nums}
+@keyframes spin{to{transform:translateY(1px) rotate(360deg)}}
+#loader{width:min(66cqh,74cqw,calc(100cqw - 32px));margin:min(3cqh,3.2cqw) auto 0}
+.bar{height:clamp(8px,1.8cqh,20px);background:#000a;border:2px solid #000;border-radius:99px;overflow:hidden}
+.bar>div{height:100%;width:0;background:var(--paint);transition:width .3s}
+#progress-text{margin-top:6px;text-align:center;color:#e9e4da;font:600 14px system-ui,sans-serif;font-variant-numeric:tabular-nums}
+#notice{width:min(640px,calc(100cqw - 32px));box-sizing:border-box;margin:min(2.4cqh,2.6cqw) auto 0;padding:8px 12px;border-radius:8px;background:var(--pill);color:#ffe3a3;font-size:13px;text-align:center}
+#notice[hidden]{display:none}
+/* The browser advice line (wasm-loader.js): larger, on the key hint's dark plate with the accent border */
+#notice.advice{padding:10px 16px;border-radius:10px;background:#0b0c0de6;border:1px solid var(--paint);font:600 15px/1.4 system-ui,sans-serif;
+  box-shadow:0 2px 10px #0008}
+#art.shell{background:none;pointer-events:none}#art.shell h1{visibility:hidden}
+.openurl{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);max-width:calc(100vw - 32px);box-sizing:border-box;padding:10px 14px;border-radius:8px;background:var(--pill);font-size:14px;z-index:30;overflow-wrap:anywhere}
+.openurl a{color:#ffe3a3}.openurl[hidden]{display:none}
+/* The error card over the cover */
+#error{display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 32px);
+  overflow:auto;box-sizing:border-box;background:var(--panel);border:1px solid var(--bad);border-radius:10px;padding:18px 20px;color:var(--text)}
+#error pre{white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;color:var(--muted);font-size:12px}
+/* A stop that is this browser, GPU or device rather than a fault of the game (wasm-play.js showUnsupported): no loader, the card
+   under the title in the cover's middle, a headline, the reason in large type, and the buttons that help a player move */
+#cover.unsupported #loader,#cover.unsupported #notice{display:none}
+#cover.unsupported #error{position:relative;left:auto;top:auto;transform:none;margin:min(3.2cqh,3.2cqw) auto 0;text-align:left;
+  width:min(620px,calc(100cqw - 32px));max-height:calc(100cqh - 30cqh - min(11cqh,9cqw) - 32px);padding:22px 24px;
+  background:#121315f5;border:2px solid var(--paint);border-radius:12px;box-shadow:0 10px 40px #000c}
+#cover.unsupported #error-title{display:block;font:800 26px/1.2 system-ui,sans-serif;color:#fff}
+#cover.unsupported #error-text{margin:12px 0 18px;max-height:none;font:500 17px/1.5 system-ui,sans-serif;color:#efe9dc;user-select:text;-webkit-user-select:text}
+#error .row+.row{margin-top:10px}
+#error-fix[hidden]{display:none}
+a.button{display:inline-block;font:inherit;padding:9px 18px;border-radius:6px;border:1px solid var(--line);background:#2a2a2a;color:var(--text);text-decoration:none}
+@container (max-height: 500px){#cover.unsupported #error{padding:14px 18px}#cover.unsupported #error-title{font-size:20px}#cover.unsupported #error-text{font-size:15px;margin:8px 0 12px}}
+/* A note on the playing page (wasm-play.js toast), on the key hint's plate under it, for 10 s or until its x is clicked */
+#toast{position:fixed;left:16px;top:16px;z-index:4;display:flex;align-items:center;gap:12px;max-width:min(560px,calc(100vw - 32px));
+  box-sizing:border-box;padding:8px 8px 8px 14px;border-radius:10px;background:#0b0c0de6;border:1px solid #f0b42966;color:#ffe3a3;
+  font:500 15px/1.4 system-ui,sans-serif;box-shadow:0 2px 10px #0008;text-shadow:0 1px 2px #000;transition:opacity .4s}
+#toast[hidden]{display:none}
+#toast.leaving{opacity:0}
+#toast button{flex:none;width:28px;height:28px;padding:0;border:0;border-radius:6px;background:#ffffff1f;color:#fff;font:700 18px/28px system-ui,sans-serif}
+#toast button:hover{background:#ffffff38}
+/* The key hint (top left, on while playing; <meta name="ue-hint">): keycaps on a dark plate, a few pulses after the cover lifts */
+#hint{position:fixed;left:16px;top:16px;z-index:4;padding:9px 14px;border-radius:10px;background:#0b0c0de6;border:1px solid #f0b42966;
+  color:#fff;font:600 16px/1.5 system-ui,sans-serif;pointer-events:none;user-select:none;box-shadow:0 2px 10px #0008;text-shadow:0 1px 2px #000}
+#hint[hidden]{display:none}
+#hint kbd{display:inline-block;min-width:34px;padding:0 7px;margin-right:8px;border:1px solid #000;border-bottom-width:3px;border-radius:5px;
+  background:var(--paint);color:#111;font:800 14px/22px system-ui,sans-serif;text-align:center;text-shadow:none}
+#hint .key+.key{margin-left:18px}
+#hint.fresh{animation:hint-pulse 1.2s ease-in-out 5}
+/* No spinning, pulsing or fading for players who ask the system for less motion; a visible keyboard focus */
+@media (prefers-reduced-motion: reduce){#cover,.bar>div,#toast{transition:none}#steps li.active::before,#hint.fresh{animation:none}}
+button:focus-visible,#cover:focus-visible,canvas:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+@keyframes hint-pulse{50%{border-color:var(--paint);box-shadow:0 0 0 4px #f0b42955,0 2px 10px #0008}}
+#hint .sound{display:block;color:#ffe3a3;font-weight:500;font-size:14px}
+#hint .sound[hidden]{display:none}
+/* The end card over the cover */
+.endcard{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+.endcard[hidden]{display:none}
+#ended-link{color:var(--accent)}
+#ended-link[hidden]{display:none}
+/* Cards the ?compat=1 and bench pages show (wasm-compat.js, a staged wasm-bench.js) */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:22px 24px;width:min(560px,calc(100vw - 32px));
+  max-height:calc(100vh - 32px);overflow:auto;box-sizing:border-box}
+h1{margin:0 0 4px;font-size:22px}
+.sub{color:var(--muted);margin:0 0 16px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+button{font:inherit;padding:9px 18px;border-radius:6px;border:1px solid var(--line);background:#2a2a2a;color:var(--text);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#111;font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+table{border-collapse:collapse;width:100%;margin-top:8px}
+/* An Android phone or tablet (html.android, the page shell): no page zoom, scroll, bounce or long-press menu; the cards keep
+   their text selection and scrolling; the steps, the key hint and the toast clear the display's cut-outs */
+html.android,html.android body{overscroll-behavior:none;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+  -webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html.android body{background:#000;box-sizing:border-box;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+html.android canvas{touch-action:none}
+html.android #steps,html.android #hint{left:calc(16px + env(safe-area-inset-left));top:calc(16px + env(safe-area-inset-top))}
+html.android #toast{left:calc(16px + env(safe-area-inset-left))}
+html.android #steps{max-width:min(460px,calc(100cqw - 32px - env(safe-area-inset-left) - env(safe-area-inset-right)))}
+html.android #error pre,html.android .card{-webkit-user-select:text;user-select:text;touch-action:pan-y}
+@media (max-height: 500px){html.android #steps li.pending,html.android #steps li.done{display:none}html.android #steps{padding:6px 12px;font-size:12px}}
+@media (orientation: portrait) and (max-width: 500px){html.android #steps li.pending,html.android #steps li.done{display:none}html.android #steps{padding:6px 12px;font-size:12px}}
+/* A phone held in portrait (touch, narrow): a card asks to turn it sideways, since a game's UI is laid out landscape; the
+   game keeps loading under it. <meta name="ue-orientation" content="any"> or ?orientation=any (and ?harness=1) turn it off */
+#rotate{display:none;position:fixed;inset:0;z-index:20;align-items:center;justify-content:center;flex-direction:column;gap:18px;
+  background:var(--cover-bottom);color:var(--title);font-size:18px;text-align:center;padding:24px;box-sizing:border-box}
+#rotate svg{width:72px;height:72px;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+@media (orientation: portrait) and (pointer: coarse) and (max-width: 600px){html:not(.any-orientation) #rotate{display:flex}}
+/* An installed game (display-mode standalone or fullscreen) draws under the status bar and the display's cut-outs
+   (viewport-fit=cover, black-translucent): the steps and the key hint (and the toast under it) clear them, as on Android */
+@media (display-mode: standalone),(display-mode: fullscreen){#steps,#hint{left:calc(16px + env(safe-area-inset-left));top:calc(16px + env(safe-area-inset-top))}
+  #toast{left:calc(16px + env(safe-area-inset-left))}}
+td{padding:3px 6px;border-bottom:1px solid #262626;vertical-align:top}
+td:first-child{white-space:nowrap;color:var(--accent);width:1%}
+</style><meta name="ue-audio-thread" content="1">
+<meta name="ue-memory64" content="lowered">
+</head>
+<body><canvas id="canvas" tabindex="0" aria-label="WebExportTest"></canvas><div id="status"></div>
+<div id="toast" role="status" hidden><span id="toast-text"></span><button id="toast-close" type="button" aria-label="Dismiss">&times;</button></div>
+<div id="hint" hidden><span id="hint-keys"></span><span class="sound" id="hint-sound" hidden data-i18n>Click or press a key for sound</span></div>
+<div id="rotate" role="alert"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M21 9a9 9 0 0 1-3 7M18 16v-3.5M18 16h3.5"/></svg><span data-i18n>Turn your phone sideways to play</span></div>
+<div id="cover" role="dialog" aria-modal="true" aria-labelledby="cover-title" aria-busy="true">
+  <div id="shell"></div>
+  <div id="art">
+    <div class="title"><h1 id="cover-title">WebExportTest</h1>
+      <div id="loader"><div class="bar" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressbar"><div id="bar"></div></div><div id="progress-text" role="status" aria-live="polite" data-i18n>Starting...</div></div>
+      <div id="notice" hidden></div></div></div>
+  <ol id="steps" aria-label="Start-up steps"></ol>
+  <div id="ended" class="card endcard" hidden><h1 id="ended-title" data-i18n>Thanks for playing</h1>
+    <p class="sub" data-i18n>The game has ended.</p>
+    <div class="row"><button id="again" class="primary" data-i18n>Play again</button><a id="ended-link" hidden target="_blank" rel="noopener"></a></div></div>
+  <div id="error" role="alert"><strong id="error-title" data-i18n>The game stopped.</strong><pre id="error-text"></pre>
+    <div class="row" id="error-fix" hidden><button class="primary" id="error-copy" type="button" data-i18n>Copy the link for Chrome</button><a class="button" id="error-get" href="https://www.google.com/chrome/" target="_blank" rel="noopener" data-i18n>Get Chrome</a></div>
+    <div class="row"><button id="log" data-i18n>Download the log</button><button id="report" hidden data-i18n>Send a report</button><button id="reload" data-i18n>Reload</button></div></div>
+</div>
+<script src="wasm-strings.js"></script>
+<script>
+// The page shell: helpers every script uses; then the page's scripts, in order
+const $ = (id) => document.getElementById(id);
+// The page's strings in the browser's language (wasm-strings.js); English when no table has the text
+const uePageLanguages = (() => { const l = (navigator.language || 'en').toLowerCase(); return [l, l.split('-')[0]]; })();
+const T = (text) => { for (const l of uePageLanguages) { const t = (window.ueStrings || {})[l]; if (t && t[text]) return t[text]; } return text; };
+document.documentElement.lang = navigator.language || 'en';
+// An Android phone or tablet (?android=1|0 forces it) gets the android class: the touch rules below (no page zoom, scroll or
+// selection; the cards and steps inside the display's safe area)
+const androidAsked = new URLSearchParams(location.search).get('android');
+if ((androidAsked === '1' || (androidAsked !== '0' && /Android/.test(navigator.userAgent))) && document.documentElement.classList) {
+  document.documentElement.classList.add('android');
+}
+// The portrait card (#rotate) is off for a game built for portrait (ue-orientation any) and for the test harness
+{
+  const p = new URLSearchParams(location.search), m = document.querySelector('meta[name="ue-orientation"]');
+  if (p.get('orientation') === 'any' || p.get('harness') === '1' || (m && m.content === 'any')) document.documentElement.classList.add('any-orientation');
+}
+for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.textContent);
+const megabytes = (n) => (n / 1e6).toFixed(1);
+// The iOS browser's pinch gestures (gesturestart and friends) ignore touch-action on the page itself
+for (const type of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+const query = new URLSearchParams(location.search);
+const pageMeta = (name, fallback = '') => { const m = document.querySelector('meta[name="' + name + '"]'); return m ? m.content : fallback; };
+// The page's own log: its last 1000 console lines (log, warn, error; 500 characters each, seconds since the page opened), which
+// the error card's "Download the log" adds after the game's log, or gives alone when the game stopped before it wrote one
+const pageLog = [];
+for (const level of ['log', 'warn', 'error']) {
+  const write = console[level];
+  if (typeof write !== 'function') continue;
+  console[level] = function (...items) {
+    try {
+      const text = items.map((a) => (typeof a === 'string' ? a : a instanceof Error ? String(a) : (() => { try { return JSON.stringify(a); } catch (e) { return String(a); } })())).join(' ');
+      pageLog.push((performance.now() / 1000).toFixed(3).padStart(8) + (level === 'log' ? ' ' : ' [' + level + '] ') + text.slice(0, 500));
+      if (pageLog.length > 1000) pageLog.shift();
+    } catch (e) { /* the log goes on */ }
+    return write.apply(this, items);
+  };
+}
+</script>
+<script src="wasm-profile.js"></script>
+<script src="wasm-harness.js"></script>
+<script src="wasm-compat.js"></script>
+<script src="wasm-prewarm.js"></script>
+<script src="wasm-play.js"></script>
+<script src="wasm-loader.js"></script>
+<script>
+// The page's default hooks: pointer lock for mouse look, taken on a click in the canvas (and within the cover's click in
+// ue-start=click). A game that installs its own Module.ueWebPage ({lock(), wanted}) keeps it.
+(() => {
+  const canvas = $('canvas');
+  const lock = () => {
+    // wanted: the engine's high-precision mouse mode (FWasmApplication::SetHighPrecisionMouseMode); a menu keeps the cursor
+    if (!(Module.ueWebPage && Module.ueWebPage.wanted)) return;
+    if (document.pointerLockElement || !canvas.requestPointerLock) return;
+    try { const p = canvas.requestPointerLock({ unadjustedMovement: true }); if (p && p.catch) p.catch(() => { try { const q = canvas.requestPointerLock(); if (q && q.catch) q.catch(() => {}); } catch (e) {} }); } catch (e) {}
+  };
+  const install = () => { if (window.Module && !Module.ueWebPage) Module.ueWebPage = { lock, wanted: !!Module.ueWebPageWanted }; };
+  document.addEventListener('pointerlockchange', () => console.log('PAGE POINTERLOCK ' + (document.pointerLockElement ? 1 : 0)));
+  // Ask that the cached game files not be evicted under storage pressure (warm visits re-downloaded without it).
+  // <meta name="ue-persist">: load (ask at once, the default), ready (once the game is ready: some browsers show a prompt),
+  // never
+  const persist = () => { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then((p) => console.log('PAGE STORAGE_PERSIST ' + (p ? 1 : 0))).catch(() => {}); };
+  const when = pageMeta('ue-persist', 'load');
+  if (when === 'load') persist();
+  else if (when === 'ready') window.addEventListener('ue-ready', persist, { once: true });
+  // the debug overlay, only with ?debug=1
+  if (query.get('debug') === '1') {
+    const d = document.createElement('script');
+    d.src = 'wasm-debug.js';
+    document.head.appendChild(d);
+  }
+  // the memory recorder, only with ?memory=1 (wasm-memory.js; inert in a Test or Shipping stage)
+  if (query.get('memory') === '1') {
+    const m = document.createElement('script');
+    m.src = 'wasm-memory.js';
+    document.head.appendChild(m);
+  }
+  // the project's intro shell, loaded after wasm-play.js defined ue.shell
+  const shellUrl = pageMeta('ue-shell');
+  if (shellUrl && !harness) {
+    const s = document.createElement('script');
+    s.src = shellUrl;
+    s.dataset.ueShell = '1';
+    // the loader waits for the shell's script (it may set window.ueExtraArgs) before it builds the command line
+    window.ueShellReady = new Promise((resolve) => {
+      s.onload = resolve;
+      s.onerror = () => { console.log('PAGE SHELL missing: ' + shellUrl); resolve(); };
+    });
+    document.head.appendChild(s);
+  }
+  // capture phase: runs before wasm-play.js's click listeners read Module.ueWebPage
+  document.addEventListener('click', install, true);
+  canvas.addEventListener('mousedown', () => { install(); if ($('cover').hidden) window.Module && Module.ueWebPage && Module.ueWebPage.lock(); });
+})();
+</script>
+</body></html>
